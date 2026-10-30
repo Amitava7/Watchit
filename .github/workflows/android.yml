@@ -1,0 +1,169 @@
+name: Build APK
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-35 build-tools;35.0.0'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # The time keeping and the thresholds: sessions, midnight, the 30 and
+      # 60 minute marks and the 15 minutes "I need it" buys.
+      - name: Run unit tests
+        run: ./gradlew --no-daemon testReleaseUnitTest
+
+  build:
+    name: Build release APK
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-35 build-tools;35.0.0'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Prepare signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KS="$RUNNER_TEMP/watchit.jks"
+          if [ -n "${KEYSTORE_BASE64:-}" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$KS"
+            ALIAS="$KEY_ALIAS"; STOREPW="$STORE_PASSWORD"; KEYPW="$KEY_PASSWORD"
+            echo "Signing with the keystore from repository secrets."
+          else
+            # No secrets configured: sign with a throwaway key so the APK still
+            # installs. Every build then has a different signature, so uninstall
+            # the previous build before installing a new one.
+            ALIAS=watchit; STOREPW=watchit; KEYPW=watchit
+            keytool -genkeypair -keystore "$KS" -storetype PKCS12 \
+              -storepass "$STOREPW" -keypass "$KEYPW" -alias "$ALIAS" \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Watchit CI, OU=Build, O=Watchit, C=ZZ"
+            echo "No KEYSTORE_BASE64 secret: signed with a throwaway CI key."
+          fi
+          echo "::add-mask::$STOREPW"
+          echo "::add-mask::$KEYPW"
+          {
+            echo "WI_STORE_FILE=$KS"
+            echo "WI_STORE_PASSWORD=$STOREPW"
+            echo "WI_KEY_ALIAS=$ALIAS"
+            echo "WI_KEY_PASSWORD=$KEYPW"
+          } >> "$GITHUB_ENV"
+
+      - name: Build
+        run: |
+          ./gradlew --no-daemon assembleRelease \
+            -PwiStoreFile="$WI_STORE_FILE" \
+            -PwiStorePassword="$WI_STORE_PASSWORD" \
+            -PwiKeyAlias="$WI_KEY_ALIAS" \
+            -PwiKeyPassword="$WI_KEY_PASSWORD"
+
+      - name: Report size
+        run: |
+          set -euo pipefail
+          APK=$(find app/build/outputs/apk/release -name '*.apk' | head -1)
+          SIZE=$(stat -c%s "$APK")
+          echo "### APK: $(basename "$APK") - $((SIZE / 1024)) KB" >> "$GITHUB_STEP_SUMMARY"
+          echo '' >> "$GITHUB_STEP_SUMMARY"
+          echo '| entry | compressed |' >> "$GITHUB_STEP_SUMMARY"
+          echo '| --- | --- |' >> "$GITHUB_STEP_SUMMARY"
+          unzip -l "$APK" | sort -rn | head -8 \
+            | awk '{printf "| %s | %s bytes |\n", $4, $1}' >> "$GITHUB_STEP_SUMMARY"
+          # The whole point of the build is that this stays tiny.
+          LIMIT=$((256 * 1024))
+          if [ "$SIZE" -gt "$LIMIT" ]; then
+            echo "APK grew to $SIZE bytes, over the $LIMIT byte budget." >&2
+            exit 1
+          fi
+          echo "APK_PATH=$APK" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: watchit-apk
+          path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" "$APK_PATH" --generate-notes
+
+  smoke:
+    name: Launch on an emulator
+    runs-on: ubuntu-latest
+    needs: build
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: watchit-apk
+          path: apk
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      # Installs the real APK on an Android 14 emulator, picks an app through
+      # the app list and checks the floating timer over it: green, dragged,
+      # red, the question and both answers. The screenshots it captures are
+      # uploaded, so the timer can be eyeballed without a phone to hand.
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: default
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          script: bash tools/smoke_test.sh
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshots
+          path: shots/*.png
+          if-no-files-found: warn
