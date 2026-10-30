@@ -7,6 +7,7 @@ import android.app.usage.UsageStatsManager;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.os.Process;
+import android.os.SystemClock;
 
 import java.util.Calendar;
 import java.util.HashSet;
@@ -30,6 +31,9 @@ final class Usage {
      */
     private static final long LOOKBACK = 3 * 60 * Rules.MINUTE;
 
+    /** A change of the clock bigger than this counts as one, as it does for the system. */
+    private static final long CLOCK_CHANGE = 2000;
+
     private final UsageStatsManager usm;
     private final UsageEvents.Event event = new UsageEvents.Event();
     private Ledger ledger;
@@ -38,6 +42,8 @@ final class Usage {
     private long seenAt;
     /** Events already handled at exactly {@link #seenAt}, so a re-read skips them. */
     private final Set<String> seenThen = new HashSet<String>();
+    /** The clock and the time since boot at the last update, to notice the clock being set. */
+    private long lastNow, lastElapsed;
 
     Usage(Context c) {
         usm = c.getSystemService(UsageStatsManager.class);
@@ -57,6 +63,17 @@ final class Usage {
 
     /** Brings the ledger up to {@code now}, starting a fresh day at midnight. */
     Ledger update(long now) {
+        long elapsed = SystemClock.elapsedRealtime();
+        if (ledger != null) {
+            // When the clock is set, the system moves every event it has stored
+            // by the same amount, so the next read would meet the ones already
+            // counted all over again. Move the read position along with them.
+            // The app in front keeps its start: the bubble follows the clock.
+            long change = (now - lastNow) - (elapsed - lastElapsed);
+            if (Math.abs(change) > CLOCK_CHANGE) seenAt += change;
+        }
+        lastNow = now;
+        lastElapsed = elapsed;
         // First call, the clock was put back, or more than a day went by unseen.
         // An event newer than now can only mean the clock went backwards.
         if (ledger == null || now < seenAt || now < ledger.dayStart()
