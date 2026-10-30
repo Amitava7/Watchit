@@ -71,7 +71,9 @@ crashed() {
 
 open_screen() {
     adb logcat -c
-    adb shell am start -W -n "$PKG/.$1"
+    # A fresh task each time: otherwise asking for the main screen again only
+    # brings its task forward, with whatever was opened last still on top.
+    adb shell am start -W --activity-clear-task -n "$PKG/.$1"
     sleep 4
     shot "$1"
     crashed "$1"
