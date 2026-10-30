@@ -39,6 +39,10 @@ icon — the ticked ones first, then the ones you have spent most time in today,
 with today's time next to each and a search box. The timer never appears
 anywhere else, the home screen included.
 
+Android itself keeps other apps' floating windows off a few of its own
+screens — Settings, permission prompts, the app installer — so the timer
+cannot appear over those, even with Settings ticked. Its time still counts.
+
 ## How it counts
 
 An app's time runs from the moment one of its screens comes to the front until
@@ -113,8 +117,8 @@ passes 256 KB.
    summary and fails past the size budget.
 3. **Launch on an emulator** — installs the APK on Android 14 and opens every
    screen; checks the size preview draws a green and a red bubble; grants the
-   two accesses with `appops`, as a user would in Settings; ticks the Settings
-   app through the app list's search box; then opens Settings and checks the
+   two accesses with `appops`, as a user would in Settings; ticks the Clock
+   app through the app list's search box; then opens Clock and checks the
    timer itself. It must appear in green, follow a drag past the top-left
    corner without leaving the screen, turn red once the clock is moved on
    31 minutes, grow into the question at 61, shrink to a red bubble on

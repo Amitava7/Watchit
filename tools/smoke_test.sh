@@ -14,7 +14,10 @@ set -euo pipefail
 
 APK=$(ls apk/*.apk | head -1)
 PKG=com.watchit
-WATCHED=com.android.settings
+# The app it is told to watch. Not Settings: Android hides other apps'
+# floating windows over Settings screens, so the timer never shows there.
+WATCHED=com.android.deskclock
+WATCHED_NAME=Clock
 SHOTS=shots
 mkdir -p "$SHOTS"
 
@@ -132,10 +135,14 @@ timer_off() {
 }
 
 # Prints the timer as ASCII in the log, and leaves the percentage of each
-# palette colour and the screen size in $SHOTS/<name>.txt.
+# palette colour and the screen size in $SHOTS/<name>.txt. What the window
+# manager says about the window goes in the log too, so a timer the system
+# hid can be told apart from one that never drew.
 look() {  # look <name>
     adb exec-out screencap > "$SHOTS/$1.raw"
     python3 tools/overlay.py look "$SHOTS/$1.raw" "$L" "$T" "$R" "$B" | tee "$SHOTS/$1.txt"
+    adb shell dumpsys window windows | python3 tools/overlay.py block \
+        | grep -E "no timer window|mHasSurface|ForceHide|isVisible|mViewVisibility|isOnScreen" || true
 }
 
 at_least() {  # at_least <name> <COLOUR> <percent>: that much of the timer is that colour
@@ -159,7 +166,7 @@ on_screen() {  # the timer lies fully on the screen of shot <name>
 
 watched_app() {
     adb logcat -c
-    adb shell am start -W -n "$WATCHED/.Settings"
+    adb shell am start -W -n "$WATCHED/.DeskClock"
 }
 
 # ---- the screens open before anything is granted ------------------------------
@@ -187,7 +194,7 @@ adb shell appops set "$PKG" SYSTEM_ALERT_WINDOW allow
 open_screen AppsActivity
 sleep 2
 tap_node 'class="android.widget.EditText"'
-adb shell input text Settings
+adb shell input text "$WATCHED_NAME"
 sleep 2
 tap_node 'class="android.widget.CheckBox"'
 expect 'checked="true"' ticked
@@ -270,7 +277,7 @@ crashed left
 # The main screen lists today's time in the watched app.
 open_screen MainActivity
 expect "Today" today
-expect 'text="Settings"' today
+expect "text=\"$WATCHED_NAME\"" today
 
 # ---- rotated, the card still fits on screen ----------------------------------------
 watched_app

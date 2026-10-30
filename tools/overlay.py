@@ -7,12 +7,13 @@ of a raw screencap. CI cannot show pictures, so the region is also printed as
 ASCII in the log.
 
   adb shell dumpsys window windows | python3 tools/overlay.py frame
+  adb shell dumpsys window windows | python3 tools/overlay.py block
   adb exec-out screencap > s.raw
   python3 tools/overlay.py look s.raw 810 612 1060 862
   python3 tools/overlay.py spot s.raw 810 612 1060 862 accent
 
 `frame` prints "left top right bottom" and exits 1 when the timer is not on
-screen. `look` prints the region as ASCII, then "SCREEN <width> <height>" and
+screen; `block` prints everything dumpsys says about its window. `look` prints the region as ASCII, then "SCREEN <width> <height>" and
 one "PCT_<COLOUR> <percent>" line per colour for the shell to assert on. `spot` prints the centre of the
 pixels of one colour, which is how the test finds a button on the card.
 """
@@ -38,13 +39,20 @@ PALETTE = [
 ]
 
 
-def frame(dump):
-    """The timer window's frame from `dumpsys window windows`, or None."""
+def window(dump):
+    """The timer window's part of `dumpsys window windows`, or None."""
     for block in re.split(r"\n(?=\s*Window #\d+ )", dump):
         head = block.strip().split("\n", 1)[0]
         # a window on its way out is still listed for its exit animation
-        if TITLE not in head or "EXITING" in head:
-            continue
+        if TITLE in head and "EXITING" not in head:
+            return block
+    return None
+
+
+def frame(dump):
+    """The timer window's frame from `dumpsys window windows`, or None."""
+    block = window(dump)
+    if block is not None:
         for key in (r"\bframe=", r"mFrame="):
             m = re.search(key + r"\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]", block)
             if m:
@@ -130,6 +138,8 @@ def main():
         if f is None:
             sys.exit(1)
         print("%d %d %d %d" % tuple(f))
+    elif cmd == "block":
+        print(window(sys.stdin.read()) or "no timer window")
     elif cmd == "look":
         look(sys.argv[2], [int(v) for v in sys.argv[3:7]])
     elif cmd == "spot":
