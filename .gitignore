@@ -1,0 +1,12 @@
+# Gradle / Android build output
+.gradle/
+build/
+local.properties
+*.apk
+*.aab
+*.keystore
+*.jks
+
+# Screenshots and dumps written by tools/smoke_test.sh
+shots/
+__pycache__/
