@@ -333,7 +333,9 @@ wait_up() {  # wait_up <what> <seconds>
 }
 
 stop_service() {
-    adb shell am stopservice -n "$PKG/.WatchService" >/dev/null
+    # Android 15's am reports "Service stopped" with exit status 255, so the
+    # check below is what counts.
+    adb shell am stopservice -n "$PKG/.WatchService" >/dev/null 2>&1 || true
     sleep 2
     if service_up; then fail "the service did not stop"; fi
 }
