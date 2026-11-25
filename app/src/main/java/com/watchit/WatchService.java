@@ -32,6 +32,10 @@ import java.util.Set;
  *
  * Reading usage happens on a background thread; the window is only touched on
  * the main thread. With the screen off nothing ticks at all.
+ *
+ * It only stops on purpose: when nothing is left to watch or an access is
+ * switched off. If it goes any other way, the system bringing it back,
+ * {@link KeepAlive} and the boot receiver all start it again.
  */
 public final class WatchService extends Service implements Overlay.Answers {
 
@@ -42,6 +46,9 @@ public final class WatchService extends Service implements Overlay.Answers {
     private static final long LEAVING_MS = 3000;
     private static final int NOTIFICATION = 1;
     private static final String CHANNEL = "watching";
+
+    /** Whether the service is up and in the foreground in this process. */
+    static volatile boolean running;
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private HandlerThread thread;
@@ -59,19 +66,11 @@ public final class WatchService extends Service implements Overlay.Answers {
     private long shownUsed;
     private String leftPkg;
     private long leftAt;
+    private boolean quitting;                 // stopping on purpose, not to be revived
 
     /** Usage access, display over other apps, and at least one app chosen. */
     static boolean ready(Context c) {
         return Usage.allowed(c) && Settings.canDrawOverlays(c) && !Prefs.apps(c).isEmpty();
-    }
-
-    static void startIfReady(Context c) {
-        if (!ready(c)) return;
-        try {
-            c.startForegroundService(new Intent(c, WatchService.class));
-        } catch (RuntimeException e) {
-            // Not allowed from the background just now; opening the app starts it.
-        }
     }
 
     @Override
@@ -87,29 +86,73 @@ public final class WatchService extends Service implements Overlay.Answers {
         IntentFilter f = new IntentFilter(Intent.ACTION_SCREEN_ON);
         f.addAction(Intent.ACTION_SCREEN_OFF);
         registerReceiver(screen, f, Context.RECEIVER_NOT_EXPORTED);
+        KeepAlive.schedule(this);
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         try {
-            startForeground(NOTIFICATION, notification(),
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
+            goForeground();
         } catch (RuntimeException e) {
-            // Restarted from the background where a foreground service may not
-            // start; the next time the app is opened it starts again.
-            stopSelf();
+            // Brought back by the system after being killed. From the background
+            // Android 15 lets this happen only while one of the app's windows is
+            // on screen, so put one up and try again. If even that is not
+            // possible, the keep-alive job tries again in a minute.
+            boolean trying = Starter.withPixel(this, new Runnable() {
+                public void run() {
+                    try {
+                        goForeground();
+                        begin();
+                    } catch (RuntimeException again) {
+                        giveUp();
+                    }
+                }
+            });
+            if (trying) return START_STICKY;
+            giveUp();
             return START_NOT_STICKY;
         }
+        begin();
+        return START_STICKY;
+    }
+
+    private void goForeground() {
+        startForeground(NOTIFICATION, notification(),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
+        running = true;
+    }
+
+    private void begin() {
         if (!ready(this)) {
-            stopSelf();
-            return START_NOT_STICKY;
+            quit();
+            return;
         }
         if (getSystemService(PowerManager.class).isInteractive()) startTicking();
-        return START_STICKY;
+    }
+
+    /** Stops on purpose: nothing to watch, or an access was switched off. */
+    private void quit() {
+        quitting = true;
+        stopSelf();
+    }
+
+    /** Could not get into the foreground now: stop, and have the job try again soon. */
+    private void giveUp() {
+        KeepAlive.soon(this);
+        quit();
+    }
+
+    /** Swiped away in recent apps: some phones kill the process next, so line up a restart. */
+    @Override
+    public void onTaskRemoved(Intent rootIntent) {
+        KeepAlive.soon(this);
+        super.onTaskRemoved(rootIntent);
     }
 
     @Override
     public void onDestroy() {
+        running = false;
+        if (!quitting && ready(this)) KeepAlive.soon(this);
         stopTicking();
         overlay.release();
         Prefs.unlisten(this, prefsChanged);
@@ -143,7 +186,7 @@ public final class WatchService extends Service implements Overlay.Answers {
                     && Settings.canDrawOverlays(WatchService.this))) {
                 main.post(new Runnable() {
                     public void run() {
-                        stopSelf();
+                        quit();
                     }
                 });
                 return;
@@ -242,7 +285,7 @@ public final class WatchService extends Service implements Overlay.Answers {
                 public void onSharedPreferenceChanged(SharedPreferences sp, String key) {
                     if (Prefs.APPS.equals(key)) {
                         watched = Prefs.apps(WatchService.this);
-                        if (watched.isEmpty()) stopSelf();
+                        if (watched.isEmpty()) quit();
                     } else if (Prefs.SIZE.equals(key) || Prefs.OPACITY.equals(key)) {
                         overlay.restyle();
                     } else {

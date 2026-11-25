@@ -8,6 +8,7 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.provider.Settings;
 import android.view.View;
 import android.widget.Button;
@@ -112,11 +113,21 @@ public final class MainActivity extends Activity {
             steps.addView(card);
         }
 
+        // Not needed to start, but without it the phone may put Watchit to
+        // sleep and stop the timer, so it is asked for until it is given.
+        if (!getSystemService(PowerManager.class).isIgnoringBatteryOptimizations(getPackageName())) {
+            steps.addView(step("Let it keep running",
+                    "So the phone never puts Watchit to sleep and the timer is always there, "
+                            + "from the moment the phone starts. Choose Allow.",
+                    "Allow", Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS));
+        }
+
         int left = (usage ? 0 : 1) + (overlay ? 0 : 1) + (apps.isEmpty() ? 1 : 0);
         if (left == 0) {
             status.setTextColor(Ui.GREEN);
             status.setText("● Watching " + apps.size() + (apps.size() == 1 ? " app" : " apps"));
-            WatchService.startIfReady(this);
+            KeepAlive.schedule(this);
+            Starter.start(this);
         } else {
             status.setTextColor(Ui.AMBER);
             status.setText("Not watching yet: " + left + (left == 1 ? " step" : " steps") + " to go");
@@ -142,10 +153,12 @@ public final class MainActivity extends Activity {
 
     /** Straight to Watchit's own switch where the phone supports it, else the list. */
     private void openSettings(String action) {
+        String list = Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS.equals(action)
+                ? Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS : action;
         try {
             startActivity(new Intent(action, Uri.parse("package:" + getPackageName())));
         } catch (ActivityNotFoundException e) {
-            startActivity(new Intent(action));
+            startActivity(new Intent(list));
         }
     }
 

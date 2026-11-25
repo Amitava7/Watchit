@@ -3,8 +3,9 @@
 # end to end: the screens open, an app is picked from the real list, and over
 # that app the timer appears in green, can be dragged without ever leaving the
 # screen, turns red after half an hour, grows into the question after an hour,
-# and both answers do what they say. Nothing is waited out - the emulator's
-# clock is moved forward instead. Fails on any crash.
+# and both answers do what they say. Then it is killed, stopped and "rebooted"
+# and has to come back each time. Nothing is waited out - the emulator's clock
+# is moved forward instead. Fails on any crash.
 #
 # Buttons in the app are found by reading the view hierarchy. The timer is a
 # window of its own that uiautomator cannot see, so it is found in dumpsys and
@@ -300,4 +301,47 @@ sleep 2
 timer_off home
 crashed home
 
-echo "the timer appeared, moved, stayed on screen, turned red, asked twice, and nothing crashed"
+# ---- it keeps running ---------------------------------------------------------------
+service_up() {
+    adb shell dumpsys activity services "$PKG" | grep -q "isForeground=true"
+}
+
+wait_up() {  # wait_up <what> <seconds>
+    for _ in $(seq 1 "$2"); do
+        if service_up; then
+            echo "$1: running again"
+            return 0
+        fi
+        sleep 1
+    done
+    adb logcat -d | grep -iE "watchit|ForegroundService|ActiveServices" | tail -40 || true
+    fail "$1: the service did not come back"
+}
+
+stop_service() {
+    adb shell am stopservice -n "$PKG/.WatchService" >/dev/null
+    sleep 2
+    if service_up; then fail "the service did not stop"; fi
+}
+
+# Killed outright, as the phone does when short of memory: the system brings
+# it back, and on Android 15 it has to put a window up to be let back in.
+adb logcat -c
+adb shell kill -9 "$(adb shell pidof "$PKG" | tr -d '\r')"
+wait_up killed 120
+crashed killed
+
+# Stopped from outside: the keep-alive job starts it again.
+stop_service
+adb shell cmd jobscheduler run -f "$PKG" 1
+wait_up keep-alive 30
+crashed keep-alive
+
+# The phone starting up: the boot receiver starts it.
+stop_service
+adb shell am broadcast -a android.intent.action.BOOT_COMPLETED -n "$PKG/.BootReceiver"
+wait_up boot 30
+crashed boot
+
+echo "the timer appeared, moved, stayed on screen, turned red, asked twice, came back"
+echo "after being killed, stopped and rebooted, and nothing crashed"

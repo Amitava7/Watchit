@@ -209,7 +209,7 @@ public final class AppsActivity extends Activity {
         Prefs.setApp(this, a.pkg, on);
         adapter.notifyDataSetChanged();
         updateCount();
-        if (on) WatchService.startIfReady(this);
+        if (on) Starter.start(this);
     }
 
     private void updateCount() {

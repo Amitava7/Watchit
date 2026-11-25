@@ -64,9 +64,31 @@ phone.
 2. **Allow usage access**: find Watchit in the list and switch it on.
 3. **Allow display over other apps**: the same, on the next list.
 4. **Choose apps** and tick the ones to watch.
+5. **Let it keep running**: choose *Allow* in the dialog, so the phone leaves
+   Watchit out of battery optimisation and never puts the timer to sleep.
 
 The main screen shows what is still missing, says *Watching N apps* once it is
 running, and lists today's time in each watched app.
+
+## Always on
+
+Once set up, the timer runs from the moment the phone starts until you untick
+every app or switch an access off. If it goes any other way, it comes back:
+
+- **The phone starts**: the boot receiver starts it, and so does the keep-alive
+  job, which Android keeps across restarts.
+- **Android kills it** to free memory: the system restarts the service. On
+  Android 15 and later an app that draws over other apps may only come back to
+  the foreground from the background while one of its windows is on screen, so
+  Watchit puts up a one-pixel transparent window for a few seconds to be let
+  back in.
+- **Anything else**, such as *Stop* in the running-apps list or a battery saver
+  closing it: a job checks every 15 minutes, and a minute after any unexpected
+  stop, and starts it again. If the screen is off just then, it tries again at
+  the next check.
+
+The one thing that stops it for good is *Force stop* in the app's settings:
+Android then cancels everything the app had lined up until it is opened again.
 
 If Android answers a switch with *Restricted setting*, which it can do for
 apps installed outside the Play Store, open Watchit's App info, tap ⋮ and
@@ -80,6 +102,7 @@ Background usage limits), or One UI may stop the timer after a while.
 | Display over other apps (`SYSTEM_ALERT_WINDOW`) | the floating timer itself |
 | `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_SPECIAL_USE` | keeping time while you are in other apps |
 | `RECEIVE_BOOT_COMPLETED` | carrying on after a restart or an update |
+| `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` | asking, once, to be left out of battery optimisation |
 
 ## Getting the APK
 
@@ -115,7 +138,7 @@ passes 256 KB.
    15 minutes "Yes, I do" buys, how the number is written).
 2. **Build release APK** — assembles, signs, prints a size breakdown in the job
    summary and fails past the size budget.
-3. **Launch on an emulator** — installs the APK on Android 14 and opens every
+3. **Launch on an emulator** — installs the APK on Android 15 and opens every
    screen; checks the size preview draws a green and a red bubble; grants the
    two accesses with `appops`, as a user would in Settings; ticks the Clock
    app through the app list's search box; then opens Clock and checks the
@@ -124,6 +147,8 @@ passes 256 KB.
    31 minutes, grow into the question at 61, shrink to a red bubble on
    *Yes, I do*, ask again 16 minutes later, go home and disappear on
    *No, leave*, still fit on screen in landscape, and stay off the home screen.
+   Then the service is killed outright, stopped from outside and sent the boot
+   broadcast, and must be back in the foreground after each.
    Nothing is waited out — the emulator's clock is moved forward. The timer is
    a window of its own that uiautomator cannot see, so `tools/overlay.py`
    finds it in `dumpsys window` and reads its colours from a screenshot,
@@ -138,6 +163,8 @@ app/src/main/java/com/watchit/
   Rules.java         red at 30 min, ask at 60, 15 more after "yes", the labels
   Usage.java         reads Android's usage log into the ledger, rolls over at midnight
   WatchService.java  foreground service: once a second, what is in front and for how long
+  Starter.java       starts it, with a one-pixel window when Android 15 asks for one
+  KeepAlive.java     the job that restarts it every 15 minutes if it is not running
   Overlay.java       the floating window: bubble or card, dragging, keeping it on screen
   BubbleView.java    draws the bubble, in the overlay and in the preview
   Prefs.java         the apps picked, size, opacity, position

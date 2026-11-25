@@ -148,13 +148,14 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      # Installs the real APK on an Android 14 emulator, picks an app through
+      # Installs the real APK on an Android 15 emulator, picks an app through
       # the app list and checks the floating timer over it: green, dragged,
-      # red, the question and both answers. The screenshots it captures are
+      # red, the question and both answers. Android 15 is where a killed
+      # service is hardest to bring back, so that is checked there too. The screenshots it captures are
       # uploaded, so the timer can be eyeballed without a phone to hand.
       - uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 34
+          api-level: 35
           target: default
           arch: x86_64
           profile: pixel_6
