@@ -28,6 +28,11 @@ sleep 5
 # keep the screen on and unlocked for the whole run
 adb shell svc power stayon true
 adb shell wm dismiss-keyguard || true
+# A freshly booted emulator on a busy CI machine can leave the launcher slow
+# enough for a "not responding" dialog to cover the screen. Let it settle, and
+# have the system keep such dialogs to itself.
+adb shell settings put global hide_error_dialogs 1
+sleep 15
 
 fail() {
     echo "::error::$1"
@@ -73,7 +78,16 @@ crashed() {
     fi
 }
 
+# Taps "Wait" on a system "isn't responding" dialog, if one is up.
+calm() {
+    if ui | grep -q "t responding"; then
+        echo "dismissing a system \"not responding\" dialog"
+        tap_node 'text="Wait"'
+    fi
+}
+
 open_screen() {
+    calm
     adb logcat -c
     # A fresh task each time: otherwise asking for the main screen again only
     # brings its task forward, with whatever was opened last still on top.
